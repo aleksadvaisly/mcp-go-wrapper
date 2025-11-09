@@ -30,3 +30,5 @@ require (
 	golang.org/x/text v0.29.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/mark3labs/mcp-go => github.com/aleksadvaisly/mcp-go v0.0.0-20251102144749-ecc6d8f9da93
