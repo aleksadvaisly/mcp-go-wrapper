@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	mcpwrapper "github.com/aleksadvaisly/mcp-go-wrapper"
 	"github.com/mark3labs/mcp-go/server"
@@ -64,6 +65,9 @@ func calculateHandler(ctx context.Context, args interface{}) (interface{}, error
 }
 
 func main() {
+	// CRITICAL: Set log output to stderr (stdout is reserved for MCP protocol)
+	log.SetOutput(os.Stderr)
+
 	mcpServer := server.NewMCPServer(
 		"simple-example",
 		"1.0.0",

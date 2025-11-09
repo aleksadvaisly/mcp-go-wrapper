@@ -38,8 +38,14 @@ After reading this README, you should be able to autonomously:
 1. **Analyze the target CLI**: Identify existing commands, their arguments, and business logic
 2. **Create argument structs**: Define typed structs with `json`, `jsonschema`, and `validate` tags for each command
 3. **Implement handlers**: Wrap existing command logic in `Handler` functions that accept typed arguments
-4. **Register tools**: Use `wrapper.Register()` or `wrapper.RegisterCobra()` to expose commands as MCP tools
-5. **Setup server**: Initialize the MCP server and configure stdio transport
+4. **Add `serve` subcommand**: Create a new `serve` command in the existing CLI that starts the MCP server (don't modify the main application)
+5. **Register tools**: Use `wrapper.Register()` or `wrapper.RegisterCobra()` to expose commands as MCP tools
+6. **Setup server**: Initialize the MCP server and configure stdio transport
+
+**CRITICAL: Logging and Output**
+- **NEVER use `stdout`** (fmt.Print, fmt.Println, log.SetOutput(os.Stdout), etc.) - stdout is reserved for MCP protocol communication
+- **ALWAYS use `stderr`** for all logging, debug output, and informational messages: `log.SetOutput(os.Stderr)`
+- Using stdout will break the MCP protocol and cause JSON parsing errors in clients
 
 The API is intentionally minimal and follows Go idioms. All required interfaces are documented in the "API Documentation" section below.
 
@@ -71,6 +77,9 @@ type GreetResult struct {
 }
 
 func main() {
+    // CRITICAL: Set log output to stderr (stdout is reserved for MCP protocol)
+    log.SetOutput(os.Stderr)
+
     mcpServer := server.NewMCPServer(
         "my-app",
         "1.0.0",
@@ -313,6 +322,69 @@ failed to build schema for tool xyz: argsType must be a struct, got string
 │  (Claude, etc)  │
 └─────────────────┘
 ```
+
+## Integration Pattern: The `serve` Command
+
+When adding MCP support to an existing CLI application, **create a new `serve` subcommand** instead of modifying the main application:
+
+```go
+// cmd/serve.go
+var serveCmd = &cobra.Command{
+    Use:   "serve",
+    Short: "Start MCP server",
+    Run: func(cmd *cobra.Command, args []string) {
+        log.SetOutput(os.Stderr) // CRITICAL: use stderr for logs
+
+        mcpServer := server.NewMCPServer("my-app", "1.0.0")
+        wrapper := mcpwrapper.New(mcpServer)
+
+        // Register all your commands as MCP tools
+        wrapper.RegisterCobra(myCmd, MyArgs{}, myHandler)
+
+        if err := server.ServeStdio(mcpServer); err != nil {
+            log.Fatal(err)
+        }
+    },
+}
+```
+
+This approach keeps your CLI application working normally while adding MCP capability:
+- `./my-app command` - runs as regular CLI
+- `./my-app serve` - starts MCP server for AI integration
+
+## CRITICAL: stdout vs stderr
+
+**The MCP protocol uses stdio (stdin/stdout) for JSON-RPC communication. Any output to stdout will corrupt the protocol.**
+
+### Rules
+
+✅ **DO**: Use stderr for all logging and debug output
+```go
+log.SetOutput(os.Stderr)           // Configure logger
+fmt.Fprintln(os.Stderr, "message") // Direct stderr writes
+```
+
+❌ **DON'T**: Use stdout for anything
+```go
+fmt.Println("message")     // BREAKS PROTOCOL
+log.Println("message")     // BREAKS PROTOCOL (if not configured)
+fmt.Printf("debug: %v", x) // BREAKS PROTOCOL
+```
+
+### Why This Matters
+
+MCP clients expect valid JSON-RPC messages on stdout:
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+```
+
+If you write logs to stdout:
+```
+Starting server...
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+```
+
+The client will fail to parse the message and the connection breaks.
 
 ## Design Principles
 
