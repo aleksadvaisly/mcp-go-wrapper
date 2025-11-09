@@ -17,6 +17,32 @@ A lightweight, annotation-based library for wrapping Go CLI applications (especi
 go get github.com/aleksadvaisly/mcp-go-wrapper
 ```
 
+## Recommended: Use with AI Coding Agents
+
+This library is designed to be easily integrated into existing CLI applications by AI coding agents. The documentation is structured to enable autonomous implementation.
+
+### For Users
+
+If you have an existing CLI application and want to add MCP support, we recommend delegating the implementation to an AI coding agent:
+
+```
+"Please read the README.md from github.com/aleksadvaisly/mcp-go-wrapper and integrate MCP
+support into my CLI application. Register all available commands as MCP tools with proper
+argument schemas and validation."
+```
+
+### For AI Agents
+
+After reading this README, you should be able to autonomously:
+
+1. **Analyze the target CLI**: Identify existing commands, their arguments, and business logic
+2. **Create argument structs**: Define typed structs with `json`, `jsonschema`, and `validate` tags for each command
+3. **Implement handlers**: Wrap existing command logic in `Handler` functions that accept typed arguments
+4. **Register tools**: Use `wrapper.Register()` or `wrapper.RegisterCobra()` to expose commands as MCP tools
+5. **Setup server**: Initialize the MCP server and configure stdio transport
+
+The API is intentionally minimal and follows Go idioms. All required interfaces are documented in the "API Documentation" section below.
+
 ## Quick Start
 
 ```go
