@@ -71,6 +71,7 @@ func main() {
 	mcpServer := server.NewMCPServer(
 		"simple-example",
 		"1.0.0",
+		server.WithInstructions("A simple example MCP server demonstrating greetings and basic arithmetic operations. Helps language models generate personalized greetings and perform calculations."),
 	)
 
 	wrapper := mcpwrapper.New(mcpServer)

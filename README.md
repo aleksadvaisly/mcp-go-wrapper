@@ -40,7 +40,13 @@ After reading this README, you should be able to autonomously:
 3. **Implement handlers**: Wrap existing command logic in `Handler` functions that accept typed arguments
 4. **Add `serve` subcommand**: Create a new `serve` command in the existing CLI that starts the MCP server (don't modify the main application)
 5. **Register tools**: Use `wrapper.Register()` or `wrapper.RegisterCobra()` to expose commands as MCP tools
-6. **Setup server**: Initialize the MCP server and configure stdio transport
+6. **Setup server**: Initialize the MCP server with instructions and configure stdio transport
+
+**CRITICAL: Server Instructions**
+- **ALWAYS add server.WithInstructions()** when creating the MCP server
+- The instructions should describe the PURPOSE and CAPABILITIES of the server
+- Without instructions, AI agents won't understand what the server is for or when to use its tools
+- Instructions appear in the MCP initialize response and help clients discover your server's capabilities
 
 **CRITICAL: Logging and Output**
 - **NEVER use `stdout`** (fmt.Print, fmt.Println, log.SetOutput(os.Stdout), etc.) - stdout is reserved for MCP protocol communication
@@ -83,6 +89,7 @@ func main() {
     mcpServer := server.NewMCPServer(
         "my-app",
         "1.0.0",
+        server.WithInstructions("A greeting service that provides personalized greetings in various formats. Helps language models generate appropriate greetings for different contexts."),
     )
 
     wrapper := mcpwrapper.New(mcpServer)
@@ -335,7 +342,11 @@ var serveCmd = &cobra.Command{
     Run: func(cmd *cobra.Command, args []string) {
         log.SetOutput(os.Stderr) // CRITICAL: use stderr for logs
 
-        mcpServer := server.NewMCPServer("my-app", "1.0.0")
+        mcpServer := server.NewMCPServer(
+            "my-app",
+            "1.0.0",
+            server.WithInstructions("Describe what your MCP server does and what capabilities it provides to language models. This helps AI agents understand when and how to use your tools."),
+        )
         wrapper := mcpwrapper.New(mcpServer)
 
         // Register all your commands as MCP tools
