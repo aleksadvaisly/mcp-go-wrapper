@@ -137,6 +137,9 @@ func buildSchema(argsType interface{}) (*mcp.ToolInputSchema, error) {
 }
 
 func inferType(t reflect.Type) string {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
 	switch t.Kind() {
 	case reflect.String:
 		return "string"

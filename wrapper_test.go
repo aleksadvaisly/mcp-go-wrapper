@@ -101,6 +101,33 @@ func TestInferType(t *testing.T) {
 	}
 }
 
+func TestInferTypePointers(t *testing.T) {
+	boolVal := true
+	intVal := 42
+	strVal := "test"
+	floatVal := 3.14
+
+	tests := []struct {
+		name     string
+		value    interface{}
+		expected string
+	}{
+		{"*bool", &boolVal, "boolean"},
+		{"*int", &intVal, "integer"},
+		{"*string", &strVal, "string"},
+		{"*float64", &floatVal, "number"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := inferType(reflect.TypeOf(tt.value))
+			if result != tt.expected {
+				t.Errorf("Expected type '%s' for %s, got '%s'", tt.expected, tt.name, result)
+			}
+		})
+	}
+}
+
 func TestValidation(t *testing.T) {
 	mcpServer := server.NewMCPServer("test", "1.0.0")
 	wrapper := New(mcpServer)
