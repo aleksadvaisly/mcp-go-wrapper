@@ -92,7 +92,7 @@ func buildSchema(argsType interface{}) (*mcp.ToolInputSchema, error) {
 	}
 
 	properties := make(map[string]interface{})
-	var required []string
+	required := make([]string, 0) // Initialize as empty slice, not nil (MCP requires 'required' field)
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
@@ -127,10 +127,7 @@ func buildSchema(argsType interface{}) (*mcp.ToolInputSchema, error) {
 	schema := &mcp.ToolInputSchema{
 		Type:       "object",
 		Properties: properties,
-	}
-
-	if len(required) > 0 {
-		schema.Required = required
+		Required:   required, // Always set, even if empty (MCP protocol requirement)
 	}
 
 	return schema, nil
