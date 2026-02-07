@@ -23,6 +23,51 @@ type TestResult struct {
 	Message string `json:"message"`
 }
 
+type TestArgsWithArray struct {
+	Name  string   `json:"name" jsonschema:"required,description=Name"`
+	Tags  []string `json:"tags,omitempty" jsonschema:"description=List of tags"`
+	Scores []int   `json:"scores,omitempty" jsonschema:"description=List of scores"`
+}
+
+func TestBuildSchemaArrayItems(t *testing.T) {
+	schema, err := buildSchema(TestArgsWithArray{})
+	if err != nil {
+		t.Fatalf("buildSchema failed: %v", err)
+	}
+
+	tagsProp, ok := schema.Properties["tags"].(map[string]interface{})
+	if !ok {
+		t.Fatal("tags property not found or invalid type")
+	}
+
+	if tagsProp["type"] != "array" {
+		t.Errorf("Expected tags type 'array', got '%v'", tagsProp["type"])
+	}
+
+	tagsItems, ok := tagsProp["items"].(map[string]interface{})
+	if !ok {
+		t.Fatal("tags items not found or invalid type")
+	}
+
+	if tagsItems["type"] != "string" {
+		t.Errorf("Expected tags items type 'string', got '%v'", tagsItems["type"])
+	}
+
+	scoresProp, ok := schema.Properties["scores"].(map[string]interface{})
+	if !ok {
+		t.Fatal("scores property not found or invalid type")
+	}
+
+	scoresItems, ok := scoresProp["items"].(map[string]interface{})
+	if !ok {
+		t.Fatal("scores items not found or invalid type")
+	}
+
+	if scoresItems["type"] != "integer" {
+		t.Errorf("Expected scores items type 'integer', got '%v'", scoresItems["type"])
+	}
+}
+
 func TestBuildSchema(t *testing.T) {
 	schema, err := buildSchema(TestArgs{})
 	if err != nil {

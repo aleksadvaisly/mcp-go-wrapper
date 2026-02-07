@@ -105,7 +105,17 @@ func buildSchema(argsType interface{}) (*mcp.ToolInputSchema, error) {
 		jsonName := strings.Split(jsonTag, ",")[0]
 
 		prop := make(map[string]interface{})
-		prop["type"] = inferType(field.Type)
+		fieldType := field.Type
+		if fieldType.Kind() == reflect.Ptr {
+			fieldType = fieldType.Elem()
+		}
+		prop["type"] = inferType(fieldType)
+
+		if (fieldType.Kind() == reflect.Slice || fieldType.Kind() == reflect.Array) {
+			prop["items"] = map[string]interface{}{
+				"type": inferType(fieldType.Elem()),
+			}
+		}
 
 		jsonSchemaTag := field.Tag.Get("jsonschema")
 		if jsonSchemaTag != "" {
