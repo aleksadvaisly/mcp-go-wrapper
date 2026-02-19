@@ -1,5 +1,5 @@
-github.com/aleksadvaisly/mcp-go v0.0.0-20251102144749-ecc6d8f9da93 h1:R2BNI2du1yOnXJkEa6xxxqAaLHMltP2vcpi316fn21Q=
-github.com/aleksadvaisly/mcp-go v0.0.0-20251102144749-ecc6d8f9da93/go.mod h1:YnJfOL382MIWDx1kMY+2zsRHU/q78dBg9aFb8W6Thdw=
+github.com/aleksadvaisly/mcp-go v0.0.0-20260219232049-969f2fe25f3d h1:e8/0wtkOVdzQEbD9Uex+WnRezk04PUONdz/GEAgmRGM=
+github.com/aleksadvaisly/mcp-go v0.0.0-20260219232049-969f2fe25f3d/go.mod h1:YnJfOL382MIWDx1kMY+2zsRHU/q78dBg9aFb8W6Thdw=
 github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
 github.com/bahlo/generic-list-go v0.2.0/go.mod h1:2KvAjgMlE5NNynlg/5iLrrCCZ2+5xWbdbCW3pNTGyYg=
 github.com/buger/jsonparser v1.1.1 h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMUs=

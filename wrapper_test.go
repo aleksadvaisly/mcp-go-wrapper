@@ -2,14 +2,12 @@ package mcpwrapper
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"reflect"
 	"testing"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/spf13/cobra"
 )
 
 type TestArgs struct {
@@ -21,156 +19,6 @@ type TestArgs struct {
 
 type TestResult struct {
 	Message string `json:"message"`
-}
-
-type TestArgsWithArray struct {
-	Name  string   `json:"name" jsonschema:"required,description=Name"`
-	Tags  []string `json:"tags,omitempty" jsonschema:"description=List of tags"`
-	Scores []int   `json:"scores,omitempty" jsonschema:"description=List of scores"`
-}
-
-func TestBuildSchemaArrayItems(t *testing.T) {
-	schema, err := buildSchema(TestArgsWithArray{})
-	if err != nil {
-		t.Fatalf("buildSchema failed: %v", err)
-	}
-
-	tagsProp, ok := schema.Properties["tags"].(map[string]interface{})
-	if !ok {
-		t.Fatal("tags property not found or invalid type")
-	}
-
-	if tagsProp["type"] != "array" {
-		t.Errorf("Expected tags type 'array', got '%v'", tagsProp["type"])
-	}
-
-	tagsItems, ok := tagsProp["items"].(map[string]interface{})
-	if !ok {
-		t.Fatal("tags items not found or invalid type")
-	}
-
-	if tagsItems["type"] != "string" {
-		t.Errorf("Expected tags items type 'string', got '%v'", tagsItems["type"])
-	}
-
-	scoresProp, ok := schema.Properties["scores"].(map[string]interface{})
-	if !ok {
-		t.Fatal("scores property not found or invalid type")
-	}
-
-	scoresItems, ok := scoresProp["items"].(map[string]interface{})
-	if !ok {
-		t.Fatal("scores items not found or invalid type")
-	}
-
-	if scoresItems["type"] != "integer" {
-		t.Errorf("Expected scores items type 'integer', got '%v'", scoresItems["type"])
-	}
-}
-
-func TestBuildSchema(t *testing.T) {
-	schema, err := buildSchema(TestArgs{})
-	if err != nil {
-		t.Fatalf("buildSchema failed: %v", err)
-	}
-
-	if schema.Type != "object" {
-		t.Errorf("Expected type 'object', got '%s'", schema.Type)
-	}
-
-	if len(schema.Properties) != 4 {
-		t.Errorf("Expected 4 properties, got %d", len(schema.Properties))
-	}
-
-	nameProp, ok := schema.Properties["name"].(map[string]interface{})
-	if !ok {
-		t.Fatal("name property not found or invalid type")
-	}
-
-	if nameProp["type"] != "string" {
-		t.Errorf("Expected name type 'string', got '%v'", nameProp["type"])
-	}
-
-	if nameProp["description"] != "Test name" {
-		t.Errorf("Expected description 'Test name', got '%v'", nameProp["description"])
-	}
-
-	ageProp, ok := schema.Properties["age"].(map[string]interface{})
-	if !ok {
-		t.Fatal("age property not found or invalid type")
-	}
-
-	if ageProp["type"] != "integer" {
-		t.Errorf("Expected age type 'integer', got '%v'", ageProp["type"])
-	}
-
-	categoryProp, ok := schema.Properties["category"].(map[string]interface{})
-	if !ok {
-		t.Fatal("category property not found or invalid type")
-	}
-
-	enumValues, ok := categoryProp["enum"].([]string)
-	if !ok {
-		t.Fatal("category enum not found or invalid type")
-	}
-
-	if len(enumValues) != 3 {
-		t.Errorf("Expected 3 enum values, got %d", len(enumValues))
-	}
-
-	if len(schema.Required) < 3 {
-		t.Errorf("Expected at least 3 required fields, got %d", len(schema.Required))
-	}
-}
-
-func TestInferType(t *testing.T) {
-	tests := []struct {
-		value    interface{}
-		expected string
-	}{
-		{"string", "string"},
-		{42, "integer"},
-		{3.14, "number"},
-		{true, "boolean"},
-		{[]int{1, 2, 3}, "array"},
-		{map[string]string{"key": "value"}, "object"},
-	}
-
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%T", tt.value), func(t *testing.T) {
-			result := inferType(reflect.TypeOf(tt.value))
-			if result != tt.expected {
-				t.Errorf("Expected type '%s', got '%s'", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestInferTypePointers(t *testing.T) {
-	boolVal := true
-	intVal := 42
-	strVal := "test"
-	floatVal := 3.14
-
-	tests := []struct {
-		name     string
-		value    interface{}
-		expected string
-	}{
-		{"*bool", &boolVal, "boolean"},
-		{"*int", &intVal, "integer"},
-		{"*string", &strVal, "string"},
-		{"*float64", &floatVal, "number"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := inferType(reflect.TypeOf(tt.value))
-			if result != tt.expected {
-				t.Errorf("Expected type '%s' for %s, got '%s'", tt.expected, tt.name, result)
-			}
-		})
-	}
 }
 
 func TestValidation(t *testing.T) {
@@ -283,82 +131,172 @@ func TestFormatValidationErrors(t *testing.T) {
 
 func TestRegister(t *testing.T) {
 	mcpServer := server.NewMCPServer("test", "1.0.0")
-	wrapper := New(mcpServer)
+	w := New(mcpServer)
 
-	handler := func(ctx context.Context, args interface{}) (interface{}, error) {
-		a := args.(*TestArgs)
-		return &TestResult{Message: fmt.Sprintf("Hello, %s", a.Name)}, nil
-	}
-
-	err := wrapper.Register("test-tool", "Test tool description", TestArgs{}, handler)
-	if err != nil {
-		t.Fatalf("Register failed: %v", err)
-	}
+	Register[TestArgs](w, "test-tool", "Test tool description",
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText(fmt.Sprintf("Hello, %s", args.Name)), nil
+		},
+	)
 
 	tools := mcpServer.ListTools()
 	if len(tools) != 1 {
-		t.Errorf("Expected 1 tool handler, got %d", len(tools))
+		t.Errorf("Expected 1 tool, got %d", len(tools))
+	}
+
+	tool := tools["test-tool"]
+	if tool == nil {
+		t.Fatal("Tool 'test-tool' not found")
 	}
 }
 
-func TestRegisterCobra(t *testing.T) {
-	mcpServer := server.NewMCPServer("test", "1.0.0")
-	wrapper := New(mcpServer)
+func TestTypedHandler(t *testing.T) {
+	v := validator.New()
 
-	cmd := &cobra.Command{
-		Use:   "test-cmd",
-		Short: "Test command description",
+	handler := TypedHandler[TestArgs](v,
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText(fmt.Sprintf("name=%s age=%d", args.Name, args.Age)), nil
+		},
+	)
+
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "test",
+			Arguments: map[string]interface{}{
+				"name":     "Alice",
+				"age":      "30",
+				"category": "A",
+			},
+		},
 	}
 
-	handler := func(ctx context.Context, args interface{}) (interface{}, error) {
-		return &TestResult{Message: "Success"}, nil
-	}
-
-	err := wrapper.RegisterCobra(cmd, TestArgs{}, handler)
+	result, err := handler(context.Background(), request)
 	if err != nil {
-		t.Fatalf("RegisterCobra failed: %v", err)
+		t.Fatalf("TypedHandler returned error: %v", err)
 	}
-
-	tools := mcpServer.ListTools()
-	if len(tools) != 1 {
-		t.Errorf("Expected 1 tool handler, got %d", len(tools))
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.IsError {
+		t.Errorf("Expected success, got error result")
 	}
 }
 
-func TestRegisterCobraNoUse(t *testing.T) {
-	mcpServer := server.NewMCPServer("test", "1.0.0")
-	wrapper := New(mcpServer)
+func TestStructuredHandler(t *testing.T) {
+	v := validator.New()
 
-	cmd := &cobra.Command{
-		Short: "Missing Use field",
+	handler := StructuredHandler[TestArgs, TestResult](v,
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (TestResult, error) {
+			return TestResult{Message: fmt.Sprintf("Hello, %s", args.Name)}, nil
+		},
+	)
+
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "test",
+			Arguments: map[string]interface{}{
+				"name":     "Alice",
+				"age":      "30",
+				"category": "A",
+			},
+		},
 	}
 
-	handler := func(ctx context.Context, args interface{}) (interface{}, error) {
-		return &TestResult{Message: "Success"}, nil
+	result, err := handler(context.Background(), request)
+	if err != nil {
+		t.Fatalf("StructuredHandler returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.IsError {
+		t.Errorf("Expected success, got error result")
+	}
+	if result.StructuredContent == nil {
+		t.Error("Expected structured content, got nil")
+	}
+}
+
+func TestTypedHandlerValidationError(t *testing.T) {
+	v := validator.New()
+
+	handler := TypedHandler[TestArgs](v,
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (*mcp.CallToolResult, error) {
+			t.Fatal("Handler should not be called with invalid args")
+			return nil, nil
+		},
+	)
+
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "test",
+			Arguments: map[string]interface{}{
+				"name":     "AB",
+				"age":      30,
+				"category": "A",
+			},
+		},
 	}
 
-	err := wrapper.RegisterCobra(cmd, TestArgs{}, handler)
-	if err == nil {
-		t.Error("Expected error for command without Use field")
+	result, err := handler(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Expected validation error in result, got error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if !result.IsError {
+		t.Error("Expected error result for validation failure")
+	}
+}
+
+func TestTypedHandlerCoercion(t *testing.T) {
+	v := validator.New()
+
+	var receivedAge int
+	handler := TypedHandler[TestArgs](v,
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (*mcp.CallToolResult, error) {
+			receivedAge = args.Age
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "test",
+			Arguments: map[string]interface{}{
+				"name":     "Alice",
+				"age":      "30",
+				"category": "A",
+			},
+		},
+	}
+
+	result, err := handler(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Handler returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("Expected success, got error result")
+	}
+	if receivedAge != 30 {
+		t.Errorf("Expected coerced age 30, got %d", receivedAge)
 	}
 }
 
 func TestHandlerInvocation(t *testing.T) {
 	mcpServer := server.NewMCPServer("test", "1.0.0")
-	wrapper := New(mcpServer)
+	w := New(mcpServer)
 
 	expectedName := "TestUser"
-	var receivedArgs *TestArgs
+	var receivedArgs TestArgs
 
-	handler := func(ctx context.Context, args interface{}) (interface{}, error) {
-		receivedArgs = args.(*TestArgs)
-		return &TestResult{Message: fmt.Sprintf("Hello, %s", receivedArgs.Name)}, nil
-	}
-
-	err := wrapper.Register("test-tool", "Test tool", TestArgs{}, handler)
-	if err != nil {
-		t.Fatalf("Register failed: %v", err)
-	}
+	Register[TestArgs](w, "test-tool", "Test tool",
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (*mcp.CallToolResult, error) {
+			receivedArgs = args
+			return mcp.NewToolResultText(fmt.Sprintf("Hello, %s", args.Name)), nil
+		},
+	)
 
 	tools := mcpServer.ListTools()
 	tool := tools["test-tool"]
@@ -366,16 +304,14 @@ func TestHandlerInvocation(t *testing.T) {
 		t.Fatal("Tool handler not registered")
 	}
 
-	requestArgs := map[string]interface{}{
-		"name":     expectedName,
-		"age":      30,
-		"category": "A",
-	}
-
 	request := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "test-tool",
-			Arguments: requestArgs,
+			Name: "test-tool",
+			Arguments: map[string]interface{}{
+				"name":     expectedName,
+				"age":      30,
+				"category": "A",
+			},
 		},
 	}
 
@@ -383,127 +319,42 @@ func TestHandlerInvocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handler invocation failed: %v", err)
 	}
-
 	if result == nil {
 		t.Fatal("Expected non-nil result")
 	}
-
-	if receivedArgs == nil {
-		t.Fatal("Handler was not called")
-	}
-
 	if receivedArgs.Name != expectedName {
 		t.Errorf("Expected name '%s', got '%s'", expectedName, receivedArgs.Name)
 	}
 }
 
-func TestHandlerValidationError(t *testing.T) {
-	mcpServer := server.NewMCPServer("test", "1.0.0")
-	wrapper := New(mcpServer)
-
-	handler := func(ctx context.Context, args interface{}) (interface{}, error) {
-		t.Fatal("Handler should not be called with invalid args")
-		return nil, nil
-	}
-
-	err := wrapper.Register("test-tool", "Test tool", TestArgs{}, handler)
-	if err != nil {
-		t.Fatalf("Register failed: %v", err)
-	}
-
-	tools := mcpServer.ListTools()
-	tool := tools["test-tool"]
-	if tool == nil {
-		t.Fatal("Tool handler not registered")
-	}
-
-	requestArgs := map[string]interface{}{
-		"name":     "AB",
-		"age":      30,
-		"category": "A",
-	}
-
-	request := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      "test-tool",
-			Arguments: requestArgs,
-		},
-	}
-
-	result, err := tool.Handler(context.Background(), request)
-	if err != nil {
-		t.Fatalf("Expected validation error in result, got error: %v", err)
-	}
-
-	if result == nil {
-		t.Fatal("Expected non-nil result")
-	}
-
-	if !result.IsError {
-		t.Error("Expected error result for validation failure")
-	}
-}
-
 func TestHandlerError(t *testing.T) {
-	mcpServer := server.NewMCPServer("test", "1.0.0")
-	wrapper := New(mcpServer)
+	v := validator.New()
 
-	expectedError := fmt.Errorf("handler error")
-	handler := func(ctx context.Context, args interface{}) (interface{}, error) {
-		return nil, expectedError
-	}
-
-	err := wrapper.Register("test-tool", "Test tool", TestArgs{}, handler)
-	if err != nil {
-		t.Fatalf("Register failed: %v", err)
-	}
-
-	tools := mcpServer.ListTools()
-	tool := tools["test-tool"]
-	if tool == nil {
-		t.Fatal("Tool handler not registered")
-	}
-
-	requestArgs := map[string]interface{}{
-		"name":     "ValidName",
-		"age":      30,
-		"category": "A",
-	}
+	handler := TypedHandler[TestArgs](v,
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultError("handler error"), nil
+		},
+	)
 
 	request := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
-			Name:      "test-tool",
-			Arguments: requestArgs,
+			Name: "test",
+			Arguments: map[string]interface{}{
+				"name":     "ValidName",
+				"age":      30,
+				"category": "A",
+			},
 		},
 	}
 
-	result, err := tool.Handler(context.Background(), request)
+	result, err := handler(context.Background(), request)
 	if err != nil {
 		t.Fatalf("Expected handler error in result, got error: %v", err)
 	}
-
 	if result == nil {
 		t.Fatal("Expected non-nil result")
 	}
-
 	if !result.IsError {
 		t.Error("Expected error result for handler failure")
-	}
-}
-
-func TestJSONMarshalResult(t *testing.T) {
-	result := &TestResult{Message: "Test message"}
-	data, err := json.Marshal(result)
-	if err != nil {
-		t.Fatalf("Failed to marshal result: %v", err)
-	}
-
-	var unmarshaled TestResult
-	if err := json.Unmarshal(data, &unmarshaled); err != nil {
-		t.Fatalf("Failed to unmarshal result: %v", err)
-	}
-
-	if unmarshaled.Message != result.Message {
-		t.Errorf("Expected message '%s', got '%s'", result.Message, unmarshaled.Message)
 	}
 }

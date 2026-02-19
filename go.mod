@@ -31,4 +31,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/mark3labs/mcp-go => github.com/aleksadvaisly/mcp-go v0.0.0-20251102144749-ecc6d8f9da93
+replace github.com/mark3labs/mcp-go => github.com/aleksadvaisly/mcp-go v0.0.0-20260219232049-969f2fe25f3d

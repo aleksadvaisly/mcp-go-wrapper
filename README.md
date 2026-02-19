@@ -1,15 +1,21 @@
 # MCP Go Wrapper
 
-A lightweight, annotation-based library for wrapping Go CLI applications (especially Cobra-based) as [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers.
+Coercion + validation middleware for [mcp-go](https://github.com/mark3labs/mcp-go) tool handlers.
 
-## Features
+mcp-go v0.43+ handles schema generation (`mcp.WithInputSchema[T]()`) and typed argument binding (`request.BindArguments()`) natively. This wrapper sits between mcp-go and your handler to add two things LLMs need in practice:
 
-- **Struct Tag Support**: Define MCP tool schemas using standard Go struct tags (`json`, `jsonschema`, `validate`)
-- **Automatic Validation**: Built-in argument validation using `go-playground/validator`
-- **Cobra Integration**: Auto-register Cobra commands as MCP tools
-- **Type Safety**: Direct function invocation with typed structs (no subprocess overhead)
-- **Clean API**: Simple, idiomatic Go interface
-- **Lightweight**: < 500 lines of core code
+1. **Bulk type coercion** -- LLMs routinely send `"20"` instead of `20`. The wrapper coerces string arguments to the types declared in your struct before mcp-go binds them.
+2. **go-playground/validator runtime validation** -- `validate:"required,min=3,email"` tags checked after binding, before your handler runs.
+
+## What It Adds Over Raw mcp-go
+
+| Concern | Raw mcp-go | With wrapper |
+|---|---|---|
+| Schema generation | `mcp.WithInputSchema[T]()` | Same (delegates to mcp-go) |
+| Argument binding | `request.BindArguments(&args)` | Same (delegates to mcp-go) |
+| String-to-type coercion | None -- `"20"` fails to bind to `int` | Automatic before binding |
+| Runtime validation | None -- write your own checks | `validate` struct tags |
+| Error formatting | Raw errors | Human-readable validation messages |
 
 ## Installation
 
@@ -17,144 +23,92 @@ A lightweight, annotation-based library for wrapping Go CLI applications (especi
 go get github.com/aleksadvaisly/mcp-go-wrapper
 ```
 
-## Recommended: Use with AI Coding Agents
-
-This library is designed to be easily integrated into existing CLI applications by AI coding agents. The documentation is structured to enable autonomous implementation.
-
-### For Users
-
-If you have an existing CLI application and want to add MCP support, we recommend delegating the implementation to an AI coding agent:
-
-```
-"Please read the README.md from github.com/aleksadvaisly/mcp-go-wrapper and integrate MCP
-support into my CLI application. Register all available commands as MCP tools with proper
-argument schemas and validation."
-```
-
-### For AI Agents
-
-After reading this README, you should be able to autonomously:
-
-1. **Analyze the target CLI**: Identify existing commands, their arguments, and business logic
-2. **Create argument structs**: Define typed structs with `json`, `jsonschema`, and `validate` tags for each command
-3. **Implement handlers**: Wrap existing command logic in `Handler` functions that accept typed arguments
-4. **Add `serve` subcommand**: Create a new `serve` command in the existing CLI that starts the MCP server (don't modify the main application)
-5. **Register tools**: Use `wrapper.Register()` or `wrapper.RegisterCobra()` to expose commands as MCP tools
-6. **Setup server**: Initialize the MCP server with instructions and configure stdio transport
-
-**CRITICAL: Server Instructions**
-- **ALWAYS add server.WithInstructions()** when creating the MCP server
-- The instructions should describe the PURPOSE and CAPABILITIES of the server
-- Without instructions, AI agents won't understand what the server is for or when to use its tools
-- Instructions appear in the MCP initialize response and help clients discover your server's capabilities
-
-**CRITICAL: Logging and Output**
-- **NEVER use `stdout`** (fmt.Print, fmt.Println, log.SetOutput(os.Stdout), etc.) - stdout is reserved for MCP protocol communication
-- **ALWAYS use `stderr`** for all logging, debug output, and informational messages: `log.SetOutput(os.Stderr)`
-- Using stdout will break the MCP protocol and cause JSON parsing errors in clients
-
-The API is intentionally minimal and follows Go idioms. All required interfaces are documented in the "API Documentation" section below.
-
 ## Quick Start
 
+Define your argument struct with `json` and `validate` tags:
+
 ```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    mcpwrapper "github.com/aleksadvaisly/mcp-go-wrapper"
-    "github.com/mark3labs/mcp-go/server"
-)
-
 type GreetArgs struct {
-    Name   string `json:"name"
-                   jsonschema:"required,description=Name to greet"
-                   validate:"required,min=1"`
-    Format string `json:"format"
-                   jsonschema:"enum=formal,enum=casual,description=Greeting style"
-                   validate:"omitempty,oneof=formal casual"`
+    Name   string `json:"name"   validate:"required,min=1"`
+    Format string `json:"format" validate:"omitempty,oneof=formal casual"`
+}
+```
+
+Three ways to wire it up:
+
+### 1. Convenience API
+
+Schema generation + coercion + validation in one call. Best for most cases.
+
+```go
+mcpwrapper.Register[GreetArgs](w, "greet", "Greet someone",
+    func(ctx context.Context, req mcp.CallToolRequest, args GreetArgs) (*mcp.CallToolResult, error) {
+        return mcp.NewToolResultText("Hello " + args.Name), nil
+    },
+)
+```
+
+`Register` calls `mcp.WithInputSchema[T]()` for schema, then wraps your handler with `TypedHandler[T]` for coercion and validation.
+
+### 2. Direct mcp-go Integration (Middleware Pattern)
+
+Use `TypedHandler` directly with mcp-go's `AddTool`. Useful when you want full control over tool options.
+
+```go
+validate := validator.New()
+
+mcpServer.AddTool(
+    mcp.NewTool("greet",
+        mcp.WithDescription("Greet someone"),
+        mcp.WithInputSchema[GreetArgs](),
+    ),
+    mcpwrapper.TypedHandler[GreetArgs](validate, handler),
+)
+```
+
+`TypedHandler` returns a `server.ToolHandlerFunc` that coerces, binds, validates, then calls your typed handler.
+
+### 3. Structured Output
+
+Returns `structuredContent` via `mcp.NewToolResultStructuredOnly`. Use when the MCP client expects machine-readable results.
+
+```go
+type CalcArgs struct {
+    A  int    `json:"a"         validate:"required"`
+    B  int    `json:"b"         validate:"required"`
+    Op string `json:"operation" validate:"required,oneof=add subtract"`
 }
 
-type GreetResult struct {
-    Message string `json:"message"`
+type CalcResult struct {
+    Result float64 `json:"result"`
 }
 
-func main() {
-    // CRITICAL: Set log output to stderr (stdout is reserved for MCP protocol)
-    log.SetOutput(os.Stderr)
-
-    mcpServer := server.NewMCPServer(
-        "my-app",
-        "1.0.0",
-        server.WithInstructions("A greeting service that provides personalized greetings in various formats. Helps language models generate appropriate greetings for different contexts."),
-    )
-
-    wrapper := mcpwrapper.New(mcpServer)
-
-    wrapper.Register(
-        "greet",
-        "Greet someone by name",
-        GreetArgs{},
-        func(ctx context.Context, args interface{}) (interface{}, error) {
-            a := args.(*GreetArgs)
-
-            message := fmt.Sprintf("Hey %s!", a.Name)
-            if a.Format == "formal" {
-                message = fmt.Sprintf("Good day, %s", a.Name)
+mcpServer.AddTool(
+    mcp.NewTool("calculate",
+        mcp.WithDescription("Basic arithmetic"),
+        mcp.WithInputSchema[CalcArgs](),
+    ),
+    mcpwrapper.StructuredHandler[CalcArgs, CalcResult](validate,
+        func(ctx context.Context, req mcp.CallToolRequest, args CalcArgs) (CalcResult, error) {
+            switch args.Op {
+            case "add":
+                return CalcResult{Result: float64(args.A + args.B)}, nil
+            case "subtract":
+                return CalcResult{Result: float64(args.A - args.B)}, nil
+            default:
+                return CalcResult{}, fmt.Errorf("unsupported operation: %s", args.Op)
             }
-
-            return &GreetResult{Message: message}, nil
         },
-    )
-
-    log.Println("Starting MCP server...")
-    if err := server.ServeStdio(mcpServer); err != nil {
-        log.Fatalf("Server error: %v", err)
-    }
-}
+    ),
+)
 ```
 
-## Struct Tag Reference
+## Validation Tags
 
-### JSON Tags (`json:"..."`)
-
-Standard Go JSON tags for field naming:
-
-```go
-type Args struct {
-    FieldName string `json:"field_name"`  // JSON key: "field_name"
-}
-```
-
-### JSON Schema Tags (`jsonschema:"..."`)
-
-Define MCP tool input schema:
+Runtime validation uses [go-playground/validator](https://github.com/go-playground/validator). Tags go on the `validate` field tag.
 
 | Tag | Description | Example |
-|-----|-------------|---------|
-| `required` | Mark field as required | `jsonschema:"required"` |
-| `description=<text>` | Field description | `jsonschema:"description=User's email address"` |
-| `enum=<value>` | Allowed values (repeat for multiple) | `jsonschema:"enum=small,enum=medium,enum=large"` |
-| `minimum=<num>` | Minimum numeric value | `jsonschema:"minimum=0"` |
-| `maximum=<num>` | Maximum numeric value | `jsonschema:"maximum=100"` |
-| `minLength=<num>` | Minimum string length | `jsonschema:"minLength=3"` |
-| `maxLength=<num>` | Maximum string length | `jsonschema:"maxLength=50"` |
-
-Multiple tags can be combined with commas:
-
-```go
-Age int `json:"age" jsonschema:"required,minimum=0,maximum=120,description=User age in years"`
-```
-
-### Validation Tags (`validate:"..."`)
-
-Runtime validation using [go-playground/validator](https://github.com/go-playground/validator):
-
-| Tag | Description | Example |
-|-----|-------------|---------|
+|---|---|---|
 | `required` | Field cannot be zero value | `validate:"required"` |
 | `min=<n>` | Minimum length/value | `validate:"min=3"` |
 | `max=<n>` | Maximum length/value | `validate:"max=50"` |
@@ -165,63 +119,36 @@ Runtime validation using [go-playground/validator](https://github.com/go-playgro
 | `lte=<n>` | Less than or equal | `validate:"lte=100"` |
 | `omitempty` | Skip validation if empty | `validate:"omitempty,email"` |
 
-Example combining all three tag types:
+Combine tags with commas:
+
+```go
+Age int `json:"age" validate:"required,gte=0,lte=120"`
+```
+
+## Struct Tags
+
+The wrapper uses two tag types:
+
+- **`json`** -- Field name mapping. Standard Go JSON tags. Used by mcp-go's `BindArguments` and by the wrapper's coercion logic.
+- **`validate`** -- Runtime validation rules. Processed by go-playground/validator after binding.
+
+Schema generation (`jsonschema` tags, descriptions, enums, min/max constraints) is handled entirely by mcp-go's `WithInputSchema[T]()`, which uses [invopop/jsonschema](https://github.com/invopop/jsonschema) under the hood. The wrapper does not participate in schema generation.
+
+Example combining schema and validation tags:
 
 ```go
 type CreateUserArgs struct {
-    Email    string `json:"email"
-                     jsonschema:"required,description=User email address"
-                     validate:"required,email"`
-    Age      int    `json:"age"
-                     jsonschema:"required,minimum=0,maximum=120,description=User age"
-                     validate:"required,gte=0,lte=120"`
-    Role     string `json:"role"
-                     jsonschema:"enum=admin,enum=user,enum=guest,description=User role"
-                     validate:"required,oneof=admin user guest"`
-    Nickname string `json:"nickname"
-                     jsonschema:"description=Optional display name"
-                     validate:"omitempty,min=3,max=20"`
+    Email string `json:"email"    jsonschema:"description=User email"  validate:"required,email"`
+    Age   int    `json:"age"      jsonschema:"minimum=0,maximum=120"   validate:"required,gte=0,lte=120"`
+    Role  string `json:"role"     jsonschema:"enum=admin,enum=user"    validate:"required,oneof=admin user"`
 }
 ```
 
-## API Documentation
+Here `jsonschema` tags are read by mcp-go for the tool schema; `validate` tags are read by the wrapper at call time.
 
-### Creating a Wrapper
+## Cobra Integration
 
-```go
-func New(server *server.MCPServer) *Wrapper
-```
-
-Creates a new wrapper around an existing `mcp-go` server instance.
-
-### Registering Tools
-
-#### Direct Registration
-
-```go
-func (w *Wrapper) Register(
-    name string,
-    description string,
-    argsType interface{},
-    handler Handler,
-) error
-```
-
-Register a tool with explicit name and description. The `argsType` should be an empty instance of your arguments struct.
-
-#### Cobra Command Registration
-
-```go
-func (w *Wrapper) RegisterCobra(
-    cmd *cobra.Command,
-    argsType interface{},
-    handler Handler,
-) error
-```
-
-Auto-register from a Cobra command. Extracts name from `cmd.Use` and description from `cmd.Short` or `cmd.Long`.
-
-Example:
+`RegisterCobra` extracts the tool name from `cmd.Use` and the description from `cmd.Short` (falling back to `cmd.Long`).
 
 ```go
 greetCmd := &cobra.Command{
@@ -229,128 +156,31 @@ greetCmd := &cobra.Command{
     Short: "Greet someone by name",
 }
 
-wrapper.RegisterCobra(greetCmd, GreetArgs{}, greetHandler)
+mcpwrapper.RegisterCobra[GreetArgs](w, greetCmd,
+    func(ctx context.Context, req mcp.CallToolRequest, args GreetArgs) (*mcp.CallToolResult, error) {
+        return mcp.NewToolResultText("Hello " + args.Name), nil
+    },
+)
 ```
 
-### Handler Function
+### Integration Pattern: The `serve` Command
+
+When adding MCP support to an existing CLI application, create a new `serve` subcommand instead of modifying the main application:
 
 ```go
-type Handler func(ctx context.Context, args interface{}) (interface{}, error)
-```
-
-Your handler receives:
-- `ctx`: Context for cancellation and deadlines
-- `args`: Pointer to your validated arguments struct
-
-Return:
-- `interface{}`: Any JSON-serializable result
-- `error`: Error if operation failed
-
-Example:
-
-```go
-func myHandler(ctx context.Context, args interface{}) (interface{}, error) {
-    a := args.(*MyArgs)
-
-    // Your logic here
-    result := processData(a.Field1, a.Field2)
-
-    return &MyResult{Output: result}, nil
-}
-```
-
-## Complete Example
-
-See [`examples/simple/main.go`](examples/simple/main.go) for a working example with multiple tools demonstrating:
-- Basic tool registration
-- Validation rules
-- Enum handling
-- Error handling
-- Cobra command integration
-
-To run the example:
-
-```bash
-cd examples/simple
-go run main.go
-```
-
-## Error Handling
-
-The wrapper provides clear error messages for common issues:
-
-### Validation Errors
-
-```json
-{
-  "error": "validation failed: Name: is required; Format: must be one of: formal casual"
-}
-```
-
-### Handler Errors
-
-```json
-{
-  "error": "handler error: division by zero"
-}
-```
-
-### Schema Errors
-
-Caught at registration time:
-
-```
-failed to build schema for tool xyz: argsType must be a struct, got string
-```
-
-## Architecture
-
-```
-┌─────────────────┐
-│   Your CLI      │
-│   (Cobra)       │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  MCP Wrapper    │  ← Struct tags → Schema + Validation
-│  (this library) │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   mcp-go        │  ← MCP Protocol
-│   (transport)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  MCP Client     │
-│  (Claude, etc)  │
-└─────────────────┘
-```
-
-## Integration Pattern: The `serve` Command
-
-When adding MCP support to an existing CLI application, **create a new `serve` subcommand** instead of modifying the main application:
-
-```go
-// cmd/serve.go
 var serveCmd = &cobra.Command{
     Use:   "serve",
     Short: "Start MCP server",
     Run: func(cmd *cobra.Command, args []string) {
-        log.SetOutput(os.Stderr) // CRITICAL: use stderr for logs
+        log.SetOutput(os.Stderr)
 
         mcpServer := server.NewMCPServer(
-            "my-app",
-            "1.0.0",
-            server.WithInstructions("Describe what your MCP server does and what capabilities it provides to language models. This helps AI agents understand when and how to use your tools."),
+            "my-app", "1.0.0",
+            server.WithInstructions("Describe what your server does."),
         )
-        wrapper := mcpwrapper.New(mcpServer)
+        w := mcpwrapper.New(mcpServer)
 
-        // Register all your commands as MCP tools
-        wrapper.RegisterCobra(myCmd, MyArgs{}, myHandler)
+        mcpwrapper.RegisterCobra[MyArgs](w, myCmd, myHandler)
 
         if err := server.ServeStdio(mcpServer); err != nil {
             log.Fatal(err)
@@ -359,80 +189,191 @@ var serveCmd = &cobra.Command{
 }
 ```
 
-This approach keeps your CLI application working normally while adding MCP capability:
-- `./my-app command` - runs as regular CLI
-- `./my-app serve` - starts MCP server for AI integration
+This keeps the CLI working normally while adding MCP capability:
+- `./my-app command` -- runs as regular CLI
+- `./my-app serve` -- starts MCP server for AI integration
 
 ## CRITICAL: stdout vs stderr
 
-**The MCP protocol uses stdio (stdin/stdout) for JSON-RPC communication. Any output to stdout will corrupt the protocol.**
+The MCP protocol uses stdio (stdin/stdout) for JSON-RPC communication. Any non-protocol output to stdout corrupts the connection.
 
-### Rules
-
-✅ **DO**: Use stderr for all logging and debug output
+**DO** -- use stderr for all logging and debug output:
 ```go
-log.SetOutput(os.Stderr)           // Configure logger
-fmt.Fprintln(os.Stderr, "message") // Direct stderr writes
+log.SetOutput(os.Stderr)
+fmt.Fprintln(os.Stderr, "message")
 ```
 
-❌ **DON'T**: Use stdout for anything
+**DO NOT** -- write anything to stdout:
 ```go
 fmt.Println("message")     // BREAKS PROTOCOL
-log.Println("message")     // BREAKS PROTOCOL (if not configured)
+log.Println("message")     // BREAKS PROTOCOL (default log writes to stderr, but verify)
 fmt.Printf("debug: %v", x) // BREAKS PROTOCOL
 ```
 
-### Why This Matters
-
-MCP clients expect valid JSON-RPC messages on stdout:
-```json
-{"jsonrpc":"2.0","id":1,"method":"tools/list"}
-```
-
-If you write logs to stdout:
+MCP clients expect only valid JSON-RPC on stdout. If you mix in log lines:
 ```
 Starting server...
 {"jsonrpc":"2.0","id":1,"method":"tools/list"}
 ```
+The client fails to parse and the connection breaks.
 
-The client will fail to parse the message and the connection breaks.
+## CRITICAL: server.WithInstructions()
 
-## Design Principles
+Always add `server.WithInstructions()` when creating the MCP server:
 
-1. **Direct Invocation**: Handlers are called directly as Go functions, not via subprocess
-2. **Type Safety**: Strong typing throughout with reflection only for schema generation
-3. **Zero Magic**: What you see is what you get - no hidden code generation
-4. **Standard Tags**: Uses familiar Go conventions (json, validate)
-5. **Fail Fast**: Validation happens before handler invocation
-6. **Clear Errors**: All errors include context for debugging
+```go
+mcpServer := server.NewMCPServer(
+    "my-app", "1.0.0",
+    server.WithInstructions("Describe your server's purpose and capabilities."),
+)
+```
 
-## Use Cases
+Without instructions, AI agents will not understand what the server is for or when to use its tools. Instructions appear in the MCP `initialize` response and are how clients discover your server's capabilities.
 
-- **CLI to API**: Expose your Cobra CLI as an MCP server for LLM integration
-- **Development Tools**: Make dev tools accessible to AI assistants
-- **Automation**: Bridge command-line utilities with AI workflows
-- **Testing**: Validate tool schemas and argument handling
+## Architecture
+
+```
++-------------------+
+|  MCP Client       |  (Claude, Cursor, etc.)
+|  (JSON-RPC)       |
++--------+----------+
+         |
+         v
++-------------------+
+|  mcp-go           |  Schema, transport, binding
+|  (protocol layer) |
++--------+----------+
+         |
+         v
++-------------------+
+|  mcp-go-wrapper   |  <- Coercion + validation middleware
+|  (this library)   |
++--------+----------+
+         |
+         v
++-------------------+
+|  Your Handler     |  Receives typed, validated args
++-------------------+
+```
+
+The wrapper is a middleware layer. It does not replace or wrap the mcp-go server -- it wraps individual tool handler functions.
+
+## Error Handling
+
+### Validation Errors
+
+Returned as tool errors (not Go errors) so the MCP client sees them:
+
+```json
+{
+  "content": [{"type": "text", "text": "validation failed: Name: is required; Format: must be one of: formal casual"}],
+  "isError": true
+}
+```
+
+### Coercion Errors
+
+```json
+{
+  "content": [{"type": "text", "text": "coercion failed: field age: strconv.ParseInt: parsing \"abc\": invalid syntax"}],
+  "isError": true
+}
+```
+
+### Handler Errors
+
+For `StructuredHandler`, handler errors are wrapped as tool errors:
+
+```json
+{
+  "content": [{"type": "text", "text": "handler error: division by zero"}],
+  "isError": true
+}
+```
+
+For `TypedHandler`, error handling is up to your handler since it returns `(*mcp.CallToolResult, error)` directly.
+
+## API Reference
+
+### Wrapper
+
+```go
+func New(mcpServer *server.MCPServer) *Wrapper
+func NewWithValidator(mcpServer *server.MCPServer, v *validator.Validate) *Wrapper
+```
+
+`New` creates a wrapper with a default validator. `NewWithValidator` lets you pass a pre-configured `*validator.Validate` (e.g., with custom validation functions registered).
+
+### Middleware Functions
+
+```go
+func TypedHandler[T any](v *validator.Validate, handler mcp.TypedToolHandlerFunc[T]) server.ToolHandlerFunc
+func StructuredHandler[TArgs any, TResult any](v *validator.Validate, handler mcp.StructuredToolHandlerFunc[TArgs, TResult]) server.ToolHandlerFunc
+```
+
+Both return a `server.ToolHandlerFunc` that performs coercion -> binding -> validation -> your handler.
+
+### Convenience Functions
+
+```go
+func Register[T any](w *Wrapper, name, description string, handler mcp.TypedToolHandlerFunc[T])
+func RegisterCobra[T any](w *Wrapper, cmd *cobra.Command, handler mcp.TypedToolHandlerFunc[T]) error
+```
+
+`Register` calls `mcp.NewTool` with `WithInputSchema[T]()` and wraps the handler. `RegisterCobra` does the same but derives name and description from the Cobra command.
+
+## For AI Agents
+
+After reading this README, you should be able to autonomously integrate MCP support into a Go CLI application.
+
+Steps:
+
+1. **Analyze the target CLI** -- identify commands, their arguments, and business logic
+2. **Create argument structs** -- define typed structs with `json`, `jsonschema`, and `validate` tags for each command
+3. **Implement handlers** -- write `mcp.TypedToolHandlerFunc[T]` functions that call existing command logic
+4. **Add a `serve` subcommand** -- create a new Cobra command that starts the MCP server (do not modify the main application entry point)
+5. **Register tools** -- use `mcpwrapper.Register[T]()` or `mcpwrapper.RegisterCobra[T]()` to expose commands
+6. **Set up the server** -- initialize with `server.WithInstructions()`, configure stdio transport, set `log.SetOutput(os.Stderr)`
+
+Example `serve` command:
+
+```go
+var serveCmd = &cobra.Command{
+    Use:   "serve",
+    Short: "Start MCP server",
+    Run: func(cmd *cobra.Command, cliArgs []string) {
+        log.SetOutput(os.Stderr)
+
+        mcpServer := server.NewMCPServer(
+            "my-app", "1.0.0",
+            server.WithInstructions("Describe your server here."),
+        )
+        w := mcpwrapper.New(mcpServer)
+
+        mcpwrapper.Register[SearchArgs](w, "search", "Search documents", searchHandler)
+        mcpwrapper.Register[CreateArgs](w, "create", "Create a document", createHandler)
+
+        if err := server.ServeStdio(mcpServer); err != nil {
+            log.Fatal(err)
+        }
+    },
+}
+```
+
+Handler signature:
+
+```go
+func searchHandler(ctx context.Context, req mcp.CallToolRequest, args SearchArgs) (*mcp.CallToolResult, error) {
+    results := doSearch(args.Query, args.Limit)
+    return mcp.NewToolResultText(formatResults(results)), nil
+}
+```
 
 ## Dependencies
 
-- [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) - MCP protocol implementation
-- [go-playground/validator](https://github.com/go-playground/validator) - Struct validation
-- [spf13/cobra](https://github.com/spf13/cobra) - CLI framework (optional, for `RegisterCobra`)
-
-## Limitations
-
-- JSON Schema generation is basic (covers common types)
-- Complex nested structs may require manual schema definition
-- Validation errors are formatted for clarity, not strict JSON Schema compliance
-- Cobra integration doesn't automatically extract flag definitions (use struct tags instead)
-
-## Future Improvements
-
-- Support for custom JSON Schema generators
-- Automatic flag extraction from Cobra commands
-- Streaming response support
-- Tool middleware/interceptors
-- Enhanced schema generation for complex types
+- [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) -- MCP protocol implementation (v0.43+)
+- [go-playground/validator](https://github.com/go-playground/validator) -- struct validation
+- [spf13/cobra](https://github.com/spf13/cobra) -- CLI framework (optional, only needed for `RegisterCobra`)
 
 ## License
 
@@ -440,11 +381,10 @@ MIT
 
 ## Contributing
 
-Contributions welcome! Please ensure:
+Contributions welcome. Please ensure:
 - Tests pass (`go test ./...`)
-- Code is formatted (`go fmt`)
+- Code is formatted (`go fmt ./...`)
 - Examples still work
-- Documentation is updated
 
 ## Credits
 

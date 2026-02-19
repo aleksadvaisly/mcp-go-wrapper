@@ -6,7 +6,9 @@ import (
 	"log"
 	"os"
 
+	"github.com/go-playground/validator/v10"
 	mcpwrapper "github.com/aleksadvaisly/mcp-go-wrapper"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
 )
@@ -17,8 +19,8 @@ type GreetArgs struct {
 }
 
 type CalculateArgs struct {
-	A        int    `json:"a" jsonschema:"required,description=First number" validate:"required"`
-	B        int    `json:"b" jsonschema:"required,description=Second number" validate:"required"`
+	A         int    `json:"a" jsonschema:"required,description=First number" validate:"required"`
+	B         int    `json:"b" jsonschema:"required,description=Second number" validate:"required"`
 	Operation string `json:"operation" jsonschema:"required,enum=add,enum=subtract,enum=multiply,enum=divide,description=Operation to perform" validate:"required,oneof=add subtract multiply divide"`
 }
 
@@ -30,42 +32,37 @@ type CalculateResult struct {
 	Result float64 `json:"result"`
 }
 
-func greetHandler(ctx context.Context, args interface{}) (interface{}, error) {
-	a := args.(*GreetArgs)
-
+func greetHandler(ctx context.Context, request mcp.CallToolRequest, args GreetArgs) (*mcp.CallToolResult, error) {
 	var message string
-	if a.Format == "formal" {
-		message = fmt.Sprintf("Good day, %s", a.Name)
+	if args.Format == "formal" {
+		message = fmt.Sprintf("Good day, %s", args.Name)
 	} else {
-		message = fmt.Sprintf("Hey %s!", a.Name)
+		message = fmt.Sprintf("Hey %s!", args.Name)
 	}
 
-	return &GreetResult{Message: message}, nil
+	return mcp.NewToolResultText(message), nil
 }
 
-func calculateHandler(ctx context.Context, args interface{}) (interface{}, error) {
-	a := args.(*CalculateArgs)
-
+func calculateHandler(ctx context.Context, request mcp.CallToolRequest, args CalculateArgs) (*mcp.CallToolResult, error) {
 	var result float64
-	switch a.Operation {
+	switch args.Operation {
 	case "add":
-		result = float64(a.A + a.B)
+		result = float64(args.A + args.B)
 	case "subtract":
-		result = float64(a.A - a.B)
+		result = float64(args.A - args.B)
 	case "multiply":
-		result = float64(a.A * a.B)
+		result = float64(args.A * args.B)
 	case "divide":
-		if a.B == 0 {
+		if args.B == 0 {
 			return nil, fmt.Errorf("division by zero")
 		}
-		result = float64(a.A) / float64(a.B)
+		result = float64(args.A) / float64(args.B)
 	}
 
-	return &CalculateResult{Result: result}, nil
+	return mcp.NewToolResultText(fmt.Sprintf("%g", result)), nil
 }
 
 func main() {
-	// CRITICAL: Set log output to stderr (stdout is reserved for MCP protocol)
 	log.SetOutput(os.Stderr)
 
 	mcpServer := server.NewMCPServer(
@@ -76,24 +73,20 @@ func main() {
 
 	wrapper := mcpwrapper.New(mcpServer)
 
-	if err := wrapper.Register(
-		"greet",
-		"Greet someone by name with optional format",
-		GreetArgs{},
-		greetHandler,
-	); err != nil {
-		log.Fatalf("Failed to register greet tool: %v", err)
-	}
+	// 1. Convenience API: Register greet tool via mcpwrapper.Register
+	mcpwrapper.Register[GreetArgs](wrapper, "greet", "Greet someone by name with optional format", greetHandler)
 
-	if err := wrapper.Register(
-		"calculate",
-		"Perform basic arithmetic operations",
-		CalculateArgs{},
-		calculateHandler,
-	); err != nil {
-		log.Fatalf("Failed to register calculate tool: %v", err)
-	}
+	// 2. Native mcp-go + TypedHandler: Register calculate tool directly on mcpServer
+	validate := validator.New()
+	mcpServer.AddTool(
+		mcp.NewTool("calculate",
+			mcp.WithDescription("Perform basic arithmetic operations"),
+			mcp.WithInputSchema[CalculateArgs](),
+		),
+		mcpwrapper.TypedHandler[CalculateArgs](validate, calculateHandler),
+	)
 
+	// 3. Cobra integration: Register greet-cobra via mcpwrapper.RegisterCobra
 	greetCmd := &cobra.Command{
 		Use:   "greet-cobra",
 		Short: "Greet someone using Cobra command",
@@ -102,7 +95,7 @@ func main() {
 		},
 	}
 
-	if err := wrapper.RegisterCobra(greetCmd, GreetArgs{}, greetHandler); err != nil {
+	if err := mcpwrapper.RegisterCobra[GreetArgs](wrapper, greetCmd, greetHandler); err != nil {
 		log.Fatalf("Failed to register cobra command: %v", err)
 	}
 
