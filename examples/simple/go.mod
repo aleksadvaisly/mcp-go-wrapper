@@ -4,6 +4,8 @@ go 1.24.10
 
 replace github.com/aleksadvaisly/mcp-go-wrapper => ../..
 
+replace github.com/mark3labs/mcp-go => ../../../mcp-go
+
 require (
 	github.com/aleksadvaisly/mcp-go-wrapper v0.0.0-00010101000000-000000000000
 	github.com/go-playground/validator/v10 v10.28.0

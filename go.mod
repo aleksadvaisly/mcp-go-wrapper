@@ -10,6 +10,8 @@ require (
 	github.com/spf13/cobra v1.10.1
 )
 
+replace github.com/mark3labs/mcp-go => ../mcp-go
+
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
