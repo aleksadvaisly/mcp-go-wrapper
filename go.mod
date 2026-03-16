@@ -10,7 +10,7 @@ require (
 	github.com/spf13/cobra v1.10.1
 )
 
-replace github.com/mark3labs/mcp-go => ../mcp-go
+replace github.com/mark3labs/mcp-go => github.com/aleksadvaisly/mcp-go v0.45.0-aleks.3
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

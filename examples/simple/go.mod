@@ -4,7 +4,7 @@ go 1.24.10
 
 replace github.com/aleksadvaisly/mcp-go-wrapper => ../..
 
-replace github.com/mark3labs/mcp-go => ../../../mcp-go
+replace github.com/mark3labs/mcp-go => github.com/aleksadvaisly/mcp-go v0.45.0-aleks.3
 
 require (
 	github.com/aleksadvaisly/mcp-go-wrapper v0.0.0-00010101000000-000000000000
