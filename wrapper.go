@@ -2,6 +2,7 @@ package mcpwrapper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -79,10 +80,83 @@ func StructuredHandler[TArgs any, TResult any](v *validator.Validate, handler mc
 }
 
 func Register[T any](w *Wrapper, name, description string, handler mcp.TypedToolHandlerFunc[T]) {
-	w.server.AddTool(
-		mcp.NewTool(name, mcp.WithDescription(description), mcp.WithInputSchema[T]()),
-		TypedHandler[T](w.validator, handler),
-	)
+	tool := mcp.NewTool(name, mcp.WithDescription(description), mcp.WithInputSchema[T]())
+	patchRequired[T](&tool)
+	w.server.AddTool(tool, TypedHandler[T](w.validator, handler))
+}
+
+func patchRequired[T any](tool *mcp.Tool) {
+	if len(tool.RawInputSchema) == 0 {
+		return
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.RawInputSchema, &schema); err != nil {
+		return
+	}
+
+	reqRaw, ok := schema["required"]
+	if !ok {
+		return
+	}
+
+	var allRequired []string
+	if err := json.Unmarshal(reqRaw, &allRequired); err != nil {
+		return
+	}
+
+	optional := optionalFields[T]()
+	var filtered []string
+	for _, name := range allRequired {
+		if !optional[name] {
+			filtered = append(filtered, name)
+		}
+	}
+
+	if len(filtered) == 0 {
+		delete(schema, "required")
+	} else {
+		b, err := json.Marshal(filtered)
+		if err != nil {
+			return
+		}
+		schema["required"] = b
+	}
+
+	patched, err := json.Marshal(schema)
+	if err != nil {
+		return
+	}
+	tool.RawInputSchema = patched
+}
+
+func optionalFields[T any]() map[string]bool {
+	t := reflect.TypeOf((*T)(nil)).Elem()
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+
+	result := make(map[string]bool)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		validate := field.Tag.Get("validate")
+		if validate == "" {
+			continue
+		}
+		if strings.Contains(validate, "required") {
+			continue
+		}
+		if strings.Contains(validate, "omitempty") {
+			key := fieldJSONKey(field)
+			if key != "" {
+				result[key] = true
+			}
+		}
+	}
+	return result
 }
 
 func coerceArgumentTypes(rawArgs any, argType reflect.Type) error {

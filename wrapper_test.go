@@ -2,6 +2,7 @@ package mcpwrapper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -324,6 +325,107 @@ func TestHandlerInvocation(t *testing.T) {
 	}
 	if receivedArgs.Name != expectedName {
 		t.Errorf("Expected name '%s', got '%s'", expectedName, receivedArgs.Name)
+	}
+}
+
+type SchemaTestArgs struct {
+	Prompt  string `json:"prompt"  validate:"required,min=1"`
+	Model   string `json:"model"   validate:"omitempty"`
+	Session string `json:"session" validate:"omitempty"`
+}
+
+func TestRegisterOmitemptyNotRequired(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[SchemaTestArgs](w, "schema-test", "Schema test tool",
+		func(ctx context.Context, req mcp.CallToolRequest, args SchemaTestArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["schema-test"]
+	if tool == nil {
+		t.Fatal("Tool 'schema-test' not found")
+	}
+
+	raw := tool.Tool.RawInputSchema
+	if len(raw) == 0 {
+		t.Fatal("Expected non-empty RawInputSchema")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	reqRaw, ok := schema["required"]
+	if !ok {
+		t.Fatal("Expected 'required' key in schema")
+	}
+
+	var required []string
+	if err := json.Unmarshal(reqRaw, &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	if len(required) != 1 {
+		t.Errorf("Expected 1 required field, got %d: %v", len(required), required)
+	}
+	if len(required) > 0 && required[0] != "prompt" {
+		t.Errorf("Expected required field 'prompt', got '%s'", required[0])
+	}
+
+	for _, r := range required {
+		if r == "model" || r == "session" {
+			t.Errorf("Field '%s' should not be in required (has omitempty)", r)
+		}
+	}
+}
+
+func TestRegisterAllRequiredFieldsKept(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[TestArgs](w, "all-required-test", "Test with mixed fields",
+		func(ctx context.Context, req mcp.CallToolRequest, args TestArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["all-required-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	var required []string
+	if err := json.Unmarshal(schema["required"], &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	requiredSet := make(map[string]bool)
+	for _, r := range required {
+		requiredSet[r] = true
+	}
+
+	if !requiredSet["name"] {
+		t.Error("Expected 'name' in required")
+	}
+	if !requiredSet["age"] {
+		t.Error("Expected 'age' in required")
+	}
+	if !requiredSet["category"] {
+		t.Error("Expected 'category' in required")
+	}
+	if requiredSet["email"] {
+		t.Error("'email' should not be in required (has omitempty)")
 	}
 }
 
