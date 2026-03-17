@@ -95,33 +95,26 @@ func patchRequired[T any](tool *mcp.Tool) {
 		return
 	}
 
-	reqRaw, ok := schema["required"]
-	if !ok {
-		return
-	}
-
 	var allRequired []string
-	if err := json.Unmarshal(reqRaw, &allRequired); err != nil {
-		return
+	if reqRaw, ok := schema["required"]; ok {
+		if err := json.Unmarshal(reqRaw, &allRequired); err != nil {
+			return
+		}
 	}
 
 	optional := optionalFields[T]()
-	var filtered []string
+	filtered := make([]string, 0)
 	for _, name := range allRequired {
 		if !optional[name] {
 			filtered = append(filtered, name)
 		}
 	}
 
-	if len(filtered) == 0 {
-		delete(schema, "required")
-	} else {
-		b, err := json.Marshal(filtered)
-		if err != nil {
-			return
-		}
-		schema["required"] = b
+	b, err := json.Marshal(filtered)
+	if err != nil {
+		return
 	}
+	schema["required"] = b
 
 	patched, err := json.Marshal(schema)
 	if err != nil {
@@ -146,10 +139,10 @@ func optionalFields[T any]() map[string]bool {
 		if validate == "" {
 			continue
 		}
-		if strings.Contains(validate, "required") {
+		if hasValidateRule(validate, "required") {
 			continue
 		}
-		if strings.Contains(validate, "omitempty") {
+		if hasValidateRule(validate, "omitempty") {
 			key := fieldJSONKey(field)
 			if key != "" {
 				result[key] = true
@@ -157,6 +150,15 @@ func optionalFields[T any]() map[string]bool {
 		}
 	}
 	return result
+}
+
+func hasValidateRule(tag, rule string) bool {
+	for _, part := range strings.Split(tag, ",") {
+		if part == rule {
+			return true
+		}
+	}
+	return false
 }
 
 func coerceArgumentTypes(rawArgs any, argType reflect.Type) error {

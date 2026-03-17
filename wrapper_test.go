@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
@@ -334,6 +335,40 @@ type SchemaTestArgs struct {
 	Session string `json:"session" validate:"omitempty"`
 }
 
+type AllOptionalArgs struct {
+	Provider string `json:"provider,omitempty" validate:"omitempty"`
+	Space    string `json:"space,omitempty" validate:"omitempty"`
+}
+
+type NoValidateTagArgs struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
+type SingleFieldArgs struct {
+	Query string `json:"query" validate:"required,min=1"`
+}
+
+type RequiredIfArgs struct {
+	Mode  string `json:"mode"  validate:"required,oneof=simple advanced"`
+	Query string `json:"query" validate:"required_if=Mode advanced"`
+	Limit int    `json:"limit" validate:"omitempty,gte=1"`
+}
+
+type ConflictingTagArgs struct {
+	Name string `json:"name" validate:"omitempty,required"`
+}
+
+type ValidateWithoutRequiredOrOmitemptyArgs struct {
+	Email string `json:"email" validate:"email"`
+	Age   int    `json:"age"   validate:"gte=0,lte=120"`
+}
+
+type JSONOmitemptyButValidateRequiredArgs struct {
+	Name string `json:"name,omitempty" validate:"required,min=1"`
+	Tag  string `json:"tag,omitempty"  validate:"omitempty"`
+}
+
 func TestRegisterOmitemptyNotRequired(t *testing.T) {
 	mcpServer := server.NewMCPServer("test", "1.0.0")
 	w := New(mcpServer)
@@ -458,5 +493,291 @@ func TestHandlerError(t *testing.T) {
 	}
 	if !result.IsError {
 		t.Error("Expected error result for handler failure")
+	}
+}
+
+func TestRegisterKeepsEmptyRequiredArrayForAllOptionalFields(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[AllOptionalArgs](w, "all-optional-test", "Test with all optional fields",
+		func(ctx context.Context, request mcp.CallToolRequest, args AllOptionalArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		})
+
+	tools := mcpServer.ListTools()
+	tool, ok := tools["all-optional-test"]
+	if !ok {
+		t.Fatal("Tool 'all-optional-test' not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	reqRaw, ok := schema["required"]
+	if !ok {
+		t.Fatal("Expected 'required' key in schema")
+	}
+
+	var required []string
+	if err := json.Unmarshal(reqRaw, &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	if len(required) != 0 {
+		t.Fatalf("Expected empty required array, got %v", required)
+	}
+}
+
+func TestRegisterNoValidateTagFieldsStayRequired(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[NoValidateTagArgs](w, "no-validate-test", "Fields without validate tags",
+		func(ctx context.Context, req mcp.CallToolRequest, args NoValidateTagArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["no-validate-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	var required []string
+	if err := json.Unmarshal(schema["required"], &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	requiredSet := make(map[string]bool)
+	for _, r := range required {
+		requiredSet[r] = true
+	}
+
+	if !requiredSet["name"] {
+		t.Error("'name' without validate tag should stay in required")
+	}
+	if !requiredSet["age"] {
+		t.Error("'age' without validate tag should stay in required")
+	}
+}
+
+func TestRegisterSingleRequiredField(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[SingleFieldArgs](w, "single-field-test", "Single required field",
+		func(ctx context.Context, req mcp.CallToolRequest, args SingleFieldArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["single-field-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	var required []string
+	if err := json.Unmarshal(schema["required"], &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	if len(required) != 1 || required[0] != "query" {
+		t.Errorf("Expected required=[\"query\"], got %v", required)
+	}
+}
+
+func TestRequiredArrayIsJSONArrayNotNull(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[AllOptionalArgs](w, "json-array-test", "Verify required serializes as []",
+		func(ctx context.Context, req mcp.CallToolRequest, args AllOptionalArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["json-array-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	raw := string(tool.Tool.RawInputSchema)
+	if !strings.Contains(raw, `"required":[]`) {
+		t.Errorf("Expected required:[] in raw schema, got: %s", raw)
+	}
+	if strings.Contains(raw, `"required":null`) {
+		t.Error("required must not be null")
+	}
+}
+
+func TestRequiredIfDoesNotCountAsRequired(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[RequiredIfArgs](w, "required-if-test", "Test required_if edge case",
+		func(ctx context.Context, req mcp.CallToolRequest, args RequiredIfArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["required-if-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	var required []string
+	if err := json.Unmarshal(schema["required"], &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	requiredSet := make(map[string]bool)
+	for _, r := range required {
+		requiredSet[r] = true
+	}
+
+	if !requiredSet["mode"] {
+		t.Error("'mode' with validate:\"required\" should be in required")
+	}
+	if requiredSet["limit"] {
+		t.Error("'limit' with validate:\"omitempty\" should not be in required")
+	}
+	if !requiredSet["query"] {
+		t.Error("'query' with validate:\"required_if=...\" should stay in required (required_if != required)")
+	}
+}
+
+func TestConflictingOmitemptyAndRequired(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[ConflictingTagArgs](w, "conflict-test", "Test omitempty+required conflict",
+		func(ctx context.Context, req mcp.CallToolRequest, args ConflictingTagArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["conflict-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	var required []string
+	if err := json.Unmarshal(schema["required"], &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	requiredSet := make(map[string]bool)
+	for _, r := range required {
+		requiredSet[r] = true
+	}
+
+	if !requiredSet["name"] {
+		t.Error("'name' with both omitempty and required should stay required (required wins)")
+	}
+}
+
+func TestValidateWithoutRequiredOrOmitemptyStaysRequired(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[ValidateWithoutRequiredOrOmitemptyArgs](w, "plain-validate-test", "Test validate without required/omitempty",
+		func(ctx context.Context, req mcp.CallToolRequest, args ValidateWithoutRequiredOrOmitemptyArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["plain-validate-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	var required []string
+	if err := json.Unmarshal(schema["required"], &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	requiredSet := make(map[string]bool)
+	for _, r := range required {
+		requiredSet[r] = true
+	}
+
+	if !requiredSet["email"] {
+		t.Error("'email' with validate:\"email\" (no omitempty) should stay in required")
+	}
+	if !requiredSet["age"] {
+		t.Error("'age' with validate:\"gte=0,lte=120\" (no omitempty) should stay in required")
+	}
+}
+
+func TestJSONOmitemptyAlsoExcludesFromRequired(t *testing.T) {
+	mcpServer := server.NewMCPServer("test", "1.0.0")
+	w := New(mcpServer)
+
+	Register[JSONOmitemptyButValidateRequiredArgs](w, "json-omit-test", "Test json omitempty vs validate",
+		func(ctx context.Context, req mcp.CallToolRequest, args JSONOmitemptyButValidateRequiredArgs) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tools := mcpServer.ListTools()
+	tool := tools["json-omit-test"]
+	if tool == nil {
+		t.Fatal("Tool not found")
+	}
+
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(tool.Tool.RawInputSchema, &schema); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	var required []string
+	if err := json.Unmarshal(schema["required"], &required); err != nil {
+		t.Fatalf("Failed to unmarshal required: %v", err)
+	}
+
+	requiredSet := make(map[string]bool)
+	for _, r := range required {
+		requiredSet[r] = true
+	}
+
+	if requiredSet["name"] {
+		t.Error("'name' with json:\"name,omitempty\" is excluded from required by invopop/jsonschema (json omitempty controls schema)")
+	}
+	if requiredSet["tag"] {
+		t.Error("'tag' with validate:\"omitempty\" should not be in required")
 	}
 }
