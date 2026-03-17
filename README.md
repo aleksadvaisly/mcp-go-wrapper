@@ -132,7 +132,23 @@ The wrapper uses two tag types:
 - **`json`** -- Field name mapping. Standard Go JSON tags. Used by mcp-go's `BindArguments` and by the wrapper's coercion logic.
 - **`validate`** -- Runtime validation rules. Processed by go-playground/validator after binding.
 
-Schema generation (`jsonschema` tags, descriptions, enums, min/max constraints) is handled entirely by mcp-go's `WithInputSchema[T]()`, which uses [invopop/jsonschema](https://github.com/invopop/jsonschema) under the hood. The wrapper does not participate in schema generation.
+Schema generation (`jsonschema` tags, descriptions, enums, min/max constraints) is handled by mcp-go's `WithInputSchema[T]()`, which uses [invopop/jsonschema](https://github.com/invopop/jsonschema) under the hood.
+
+**Schema patching: `omitempty` removes fields from `required`**
+
+`invopop/jsonschema` marks all struct fields as `required` by default. This is wrong for optional fields -- MCP clients will reject calls missing those fields. The wrapper fixes this automatically: any field with `validate:"omitempty"` is removed from the schema's `required` array. Fields without `validate` tags or with `validate:"required"` stay in `required`.
+
+```go
+type SearchArgs struct {
+    Query  string `json:"query"  validate:"required,min=1"`   // -> required
+    Limit  int    `json:"limit"  validate:"omitempty,gte=1"`   // -> NOT required
+    Offset int    `json:"offset" validate:"omitempty"`          // -> NOT required
+}
+```
+
+Resulting schema `required: ["query"]` -- not `["query", "limit", "offset"]`.
+
+This only applies when using `Register[T]` or `RegisterCobra[T]`. If you use `TypedHandler` directly with `mcp.NewTool`, you manage the schema yourself.
 
 Example combining schema and validation tags:
 
