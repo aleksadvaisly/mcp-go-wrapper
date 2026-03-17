@@ -136,19 +136,37 @@ Schema generation (`jsonschema` tags, descriptions, enums, min/max constraints) 
 
 **Schema patching: `omitempty` removes fields from `required`**
 
-`invopop/jsonschema` marks all struct fields as `required` by default. This is wrong for optional fields -- MCP clients will reject calls missing those fields. The wrapper fixes this automatically: any field with `validate:"omitempty"` is removed from the schema's `required` array. Fields without `validate` tags or with `validate:"required"` stay in `required`.
+`invopop/jsonschema` marks all struct fields as `required` by default. This is wrong for optional fields -- MCP clients will reject calls missing those fields. The wrapper fixes this automatically when using `Register[T]` or `RegisterCobra[T]`.
+
+Rules for which fields end up in `required`:
+
+| Scenario | In `required`? | Why |
+|---|---|---|
+| `validate:"required,min=1"` | Yes | Explicit required |
+| `validate:"omitempty,gte=1"` | No | Explicit omitempty |
+| `validate:"omitempty,required"` | Yes | `required` wins over `omitempty` |
+| `validate:"email"` (no omitempty) | Yes | No omitempty = stays required |
+| `validate:"required_if=Mode adv"` | Yes | `required_if` is NOT `required` (exact match) |
+| No `validate` tag at all | Yes | Only omitempty removes from required |
+| `json:"field,omitempty"` | No | `invopop/jsonschema` respects json omitempty too |
+
+Example:
 
 ```go
 type SearchArgs struct {
-    Query  string `json:"query"  validate:"required,min=1"`   // -> required
-    Limit  int    `json:"limit"  validate:"omitempty,gte=1"`   // -> NOT required
-    Offset int    `json:"offset" validate:"omitempty"`          // -> NOT required
+    Query  string `json:"query"  validate:"required,min=1"`           // -> required
+    Limit  int    `json:"limit"  validate:"omitempty,gte=1"`          // -> NOT required
+    Offset int    `json:"offset" validate:"omitempty"`                 // -> NOT required
+    Format string `json:"format" validate:"email"`                     // -> required (no omitempty)
+    Mode   string `json:"mode"   validate:"required_if=Format json"`  // -> required (required_if != required)
 }
 ```
 
-Resulting schema `required: ["query"]` -- not `["query", "limit", "offset"]`.
+Resulting schema `required: ["query", "format", "mode"]`.
 
-This only applies when using `Register[T]` or `RegisterCobra[T]`. If you use `TypedHandler` directly with `mcp.NewTool`, you manage the schema yourself.
+When all fields are optional, the schema contains `required: []` (empty array, not null or missing). This is required by the MCP protocol.
+
+This patching only applies when using `Register[T]` or `RegisterCobra[T]`. If you use `TypedHandler` directly with `mcp.NewTool`, you manage the schema yourself.
 
 Example combining schema and validation tags:
 
