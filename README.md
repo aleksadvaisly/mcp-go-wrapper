@@ -1,5 +1,7 @@
 # MCP Go Wrapper
 
+<p align="center"><img src="docs/gowrapper.png" width="500"></p>
+
 Coercion + validation middleware for [mcp-go](https://github.com/mark3labs/mcp-go) tool handlers.
 
 mcp-go v0.43+ handles schema generation (`mcp.WithInputSchema[T]()`) and typed argument binding (`request.BindArguments()`) natively. This wrapper sits between mcp-go and your handler to add two things LLMs need in practice:
