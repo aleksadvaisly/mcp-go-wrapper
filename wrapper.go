@@ -85,6 +85,18 @@ func Register[T any](w *Wrapper, name, description string, handler mcp.TypedTool
 	w.server.AddTool(tool, TypedHandler[T](w.validator, handler))
 }
 
+// RegisterEager is like Register but marks the tool as always-loaded, i.e.
+// exempt from MCP tool-search deferral, via the anthropic/alwaysLoad _meta key
+// honored by Claude Code (v2.1.121+). Reserve it for a small set of tools the
+// client should see on every turn without a ToolSearch round-trip; each eager
+// tool consumes context that would otherwise be free for the conversation.
+func RegisterEager[T any](w *Wrapper, name, description string, handler mcp.TypedToolHandlerFunc[T]) {
+	tool := mcp.NewTool(name, mcp.WithDescription(description), mcp.WithInputSchema[T]())
+	patchRequired[T](&tool)
+	tool.Meta = mcp.NewMetaFromMap(map[string]any{"anthropic/alwaysLoad": true})
+	w.server.AddTool(tool, TypedHandler[T](w.validator, handler))
+}
+
 func patchRequired[T any](tool *mcp.Tool) {
 	if len(tool.RawInputSchema) == 0 {
 		return

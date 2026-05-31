@@ -6,11 +6,11 @@ toolchain go1.24.10
 
 require (
 	github.com/go-playground/validator/v10 v10.28.0
-	github.com/mark3labs/mcp-go v0.45.1-0.20260315091451-4dd76c65f774
+	github.com/mark3labs/mcp-go v0.54.1-aleks.1
 	github.com/spf13/cobra v1.10.1
 )
 
-replace github.com/mark3labs/mcp-go => github.com/aleksadvaisly/mcp-go v0.45.0-aleks.5
+replace github.com/mark3labs/mcp-go => github.com/aleksadvaisly/mcp-go v0.54.1-aleks.1
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
