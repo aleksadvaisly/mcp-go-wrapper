@@ -79,10 +79,19 @@ func StructuredHandler[TArgs any, TResult any](v *validator.Validate, handler mc
 	}
 }
 
-func Register[T any](w *Wrapper, name, description string, handler mcp.TypedToolHandlerFunc[T]) {
+// RegisterLazy registers a tool with the default behaviour: the tool is subject
+// to MCP tool-search deferral (the client loads its schema on demand). This is
+// the canonical name; pair it with RegisterEager when the lazy-vs-eager intent
+// should read clearly at the call site.
+func RegisterLazy[T any](w *Wrapper, name, description string, handler mcp.TypedToolHandlerFunc[T]) {
 	tool := mcp.NewTool(name, mcp.WithDescription(description), mcp.WithInputSchema[T]())
 	patchRequired[T](&tool)
 	w.server.AddTool(tool, TypedHandler[T](w.validator, handler))
+}
+
+// Register is a backwards-compatible alias for RegisterLazy.
+func Register[T any](w *Wrapper, name, description string, handler mcp.TypedToolHandlerFunc[T]) {
+	RegisterLazy(w, name, description, handler)
 }
 
 // RegisterEager is like Register but marks the tool as always-loaded, i.e.
